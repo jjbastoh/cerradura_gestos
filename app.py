@@ -1,33 +1,29 @@
 
 import paho.mqtt.client as paho
-import time
 import json
 import streamlit as st
-import cv2
 import numpy as np
-from PIL import Image, ImageOps as ImagOps
+from PIL import Image
 from keras.models import load_model
 
-# Configuracion MQTT: debe coincidir con el ESP32
+# Configuracion MQTT
 BROKER = "broker.mqttdashboard.com"
 PORT = 1883
 TOPIC = "IMIA"
 
-def on_publish(client, userdata, mid, reason_code, properties):
-    print("Mensaje publicado. ID:", mid)
-
-def on_connect(client, userdata, flags, reason_code, properties):
-    if reason_code == 0:
+def on_connect(client, userdata, flags, rc):
+    if rc == 0:
         print("Conectado al broker MQTT")
     else:
-        print("Error de conexion MQTT:", reason_code)
+        print("Error de conexion MQTT:", rc)
+
+def on_publish(client, userdata, mid):
+    print("Mensaje publicado. ID:", mid)
 
 @st.cache_resource
 def crear_cliente():
-    cliente = paho.Client(
-        callback_api_version=paho.CallbackAPIVersion.VERSION2,
-        client_id="APP_CERR"
-    )
+    # Sintaxis compatible con versiones anteriores de paho-mqtt
+    cliente = paho.Client("APP_CERR")
     cliente.on_connect = on_connect
     cliente.on_publish = on_publish
     cliente.connect(BROKER, PORT, 60)
@@ -58,9 +54,8 @@ def enviar_gesto(gesto):
         st.error(f"Error MQTT: {error}")
 
 st.title("Cerradura Inteligente")
-st.caption(f"Broker: {BROKER} | Puerto: {PORT} | Tópico: {TOPIC}")
+st.caption(f"Broker: {BROKER} | Puerto: {PORT} | Topico: {TOPIC}")
 
-# Cargar modelo
 @st.cache_resource
 def cargar_modelo():
     return load_model("keras_model.h5")
@@ -87,7 +82,7 @@ if img_file_buffer is not None:
     data[0] = normalized_image_array
 
     prediction = model.predict(data, verbose=0)
-    st.write("Predicción:", prediction.tolist())
+    st.write("Prediccion:", prediction.tolist())
 
     if prediction[0][0] > 0.3:
         st.header("Abriendo")
@@ -98,5 +93,6 @@ if img_file_buffer is not None:
         enviar_gesto("Cierra")
 
     else:
-        st.warning("No se reconoció un gesto con suficiente confianza.")
+        st.warning("No se reconocio un gesto con suficiente confianza.")
+
 
