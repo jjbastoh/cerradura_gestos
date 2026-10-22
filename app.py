@@ -96,3 +96,4 @@ if img_file_buffer is not None:
         st.warning("No se reconocio un gesto con suficiente confianza.")
 
 
+
