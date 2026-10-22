@@ -1,64 +1,83 @@
-import paho.mqtt.client as paho
-import time
+
 import json
 import streamlit as st
-import cv2
-import numpy as np
-#from PIL import Image
-from PIL import Image as Image, ImageOps as ImagOps
-from keras.models import load_model
+import paho.mqtt.client as mqtt
 
-def on_publish(client,userdata,result):             #create function for callback
-    print("el dato ha sido publicado \n")
-    pass
+st.set_page_config(
+    page_title="Control MQTT",
+    page_icon="🎛️",
+    layout="centered"
+)
 
-def on_message(client, userdata, message):
-    global message_received
-    time.sleep(2)
-    message_received=str(message.payload.decode("utf-8"))
-    st.write(message_received)
+# Mantener estos datos iguales a los del ESP32
+MQTT_BROKER = "broker.mqttdashboard.com"
+MQTT_PORT = 1883
+MQTT_TOPIC = "IMIA"
 
-        
+st.title("🎛️ Control de actuadores")
+st.subheader("Control de servo y luces mediante MQTT")
 
+@st.cache_resource
+def crear_cliente():
+    cliente = mqtt.Client(
+        mqtt.CallbackAPIVersion.VERSION2,
+        client_id="StreamlitControlIMIA"
+    )
+    cliente.connect(MQTT_BROKER, MQTT_PORT, 60)
+    cliente.loop_start()
+    return cliente
 
-broker="broker.hivemq.com"
-port=1883
-client1= paho.Client("APP_CERR")
-client1.on_message = on_message
-client1.on_publish = on_publish
-client1.connect(broker,port)
+def enviar_comando(datos):
+    try:
+        cliente = crear_cliente()
+        mensaje = json.dumps(datos)
+        resultado = cliente.publish(
+            MQTT_TOPIC,
+            mensaje,
+            qos=0
+        )
+        resultado.wait_for_publish(timeout=3)
 
-model = load_model('keras_model.h5')
-data = np.ndarray(shape=(1, 224, 224, 3), dtype=np.float32)
+        if resultado.rc == mqtt.MQTT_ERR_SUCCESS:
+            st.success(f"Comando enviado: {mensaje}")
+        else:
+            st.error("No se pudo publicar el mensaje MQTT.")
 
-st.title("Cerradura Inteligente")
+    except Exception as error:
+        st.error(f"Error de conexión MQTT: {error}")
 
-img_file_buffer = st.camera_input("Toma una Foto")
+st.caption(
+    f"Broker: {MQTT_BROKER} | Puerto: {MQTT_PORT} | "
+    f"Tópico: {MQTT_TOPIC}"
+)
 
-if img_file_buffer is not None:
-    # To read image file buffer with OpenCV:
-    data = np.ndarray(shape=(1, 224, 224, 3), dtype=np.float32)
-   #To read image file buffer as a PIL Image:
-    img = Image.open(img_file_buffer)
+col1, col2 = st.columns(2)
 
-    newsize = (224, 224)
-    img = img.resize(newsize)
-    # To convert PIL Image to numpy array:
-    img_array = np.array(img)
+with col1:
+    if st.button("🟢 ABRIR", use_container_width=True):
+        enviar_comando({"gesto": "Abre"})
 
-    # Normalize the image
-    normalized_image_array = (img_array.astype(np.float32) / 127.0) - 1
-    # Load the image into the array
-    data[0] = normalized_image_array
+with col2:
+    if st.button("🔴 CERRAR", use_container_width=True):
+        enviar_comando({"gesto": "Cierra"})
 
-    # run the inference
-    prediction = model.predict(data)
-    print(prediction)
-    if prediction[0][0]>0.3:
-      st.header('Abriendo')
-      client1.publish("IMIA","{'gesto': 'Abre'}",qos=0, retain=False)
-      time.sleep(0.2)
-    if prediction[0][1]>0.3:
-      st.header('Cerrando')
-      client1.publish("IMIA","{'gesto': 'Cierra'}",qos=0, retain=False)
-      time.sleep(0.2)  
+st.divider()
+
+st.subheader("Posición del servo")
+
+angulo = st.slider(
+    "Selecciona el ángulo",
+    min_value=0,
+    max_value=180,
+    value=90,
+    step=5
+)
+
+st.write(f"Ángulo seleccionado: **{angulo}°**")
+
+if st.button("Enviar ángulo", use_container_width=True):
+    enviar_comando({
+        "gesto": "Angulo",
+        "angulo": angulo
+    })
+
