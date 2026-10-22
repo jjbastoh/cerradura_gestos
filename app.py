@@ -5,78 +5,98 @@ import json
 import streamlit as st
 import cv2
 import numpy as np
-#from PIL import Image
-from PIL import Image as Image, ImageOps as ImagOps
+from PIL import Image, ImageOps as ImagOps
 from keras.models import load_model
 
-def on_publish(client, userdata, result):
-    print("el dato ha sido publicado \n")
-    pass
+# Configuracion MQTT: debe coincidir con el ESP32
+BROKER = "broker.mqttdashboard.com"
+PORT = 1883
+TOPIC = "IMIA"
 
-def on_message(client, userdata, message):
-    global message_received
-    time.sleep(2)
-    message_received = str(message.payload.decode("utf-8"))
-    st.write(message_received)
+def on_publish(client, userdata, mid, reason_code, properties):
+    print("Mensaje publicado. ID:", mid)
 
+def on_connect(client, userdata, flags, reason_code, properties):
+    if reason_code == 0:
+        print("Conectado al broker MQTT")
+    else:
+        print("Error de conexion MQTT:", reason_code)
 
-# CONEXIÓN MQTT: coincide con el ESP32 de Wokwi
-broker = "broker.mqttdashboard.com"
-port = 1883
-topic = "IMIA"
+@st.cache_resource
+def crear_cliente():
+    cliente = paho.Client(
+        callback_api_version=paho.CallbackAPIVersion.VERSION2,
+        client_id="APP_CERR"
+    )
+    cliente.on_connect = on_connect
+    cliente.on_publish = on_publish
+    cliente.connect(BROKER, PORT, 60)
+    cliente.loop_start()
+    return cliente
 
-client1 = paho.Client("APP_CERR")
-client1.on_message = on_message
-client1.on_publish = on_publish
-client1.connect(broker, port)
-client1.loop_start()
+def enviar_gesto(gesto):
+    try:
+        cliente = crear_cliente()
+        mensaje = json.dumps({"gesto": gesto})
 
-model = load_model('keras_model.h5')
-data = np.ndarray(shape=(1, 224, 224, 3), dtype=np.float32)
+        info = cliente.publish(
+            TOPIC,
+            mensaje,
+            qos=0,
+            retain=False
+        )
+
+        info.wait_for_publish(timeout=3)
+
+        if info.rc == paho.MQTT_ERR_SUCCESS:
+            st.success(f"Comando enviado: {gesto}")
+            print("Publicado en", TOPIC, ":", mensaje)
+        else:
+            st.error(f"Error al publicar MQTT: {info.rc}")
+
+    except Exception as error:
+        st.error(f"Error MQTT: {error}")
 
 st.title("Cerradura Inteligente")
+st.caption(f"Broker: {BROKER} | Puerto: {PORT} | Tópico: {TOPIC}")
 
-img_file_buffer = st.camera_input("Toma una Foto")
+# Cargar modelo
+@st.cache_resource
+def cargar_modelo():
+    return load_model("keras_model.h5")
+
+try:
+    model = cargar_modelo()
+except Exception as error:
+    st.error(f"No se pudo cargar keras_model.h5: {error}")
+    st.stop()
+
+img_file_buffer = st.camera_input("Toma una foto para reconocer el gesto")
 
 if img_file_buffer is not None:
-    # To read image file buffer with OpenCV:
-    data = np.ndarray(shape=(1, 224, 224, 3), dtype=np.float32)
+    img = Image.open(img_file_buffer).convert("RGB")
+    img = img.resize((224, 224))
 
-    # To read image file as a PIL Image:
-    img = Image.open(img_file_buffer)
+    img_array = np.asarray(img, dtype=np.float32)
+    normalized_image_array = (img_array / 127.0) - 1.0
 
-    newsize = (224, 224)
-    img = img.resize(newsize)
-
-    # To convert PIL Image to numpy array:
-    img_array = np.array(img)
-
-    # Normalize the image
-    normalized_image_array = (img_array.astype(np.float32) / 127.0) - 1
-
-    # Load the image into the array
+    data = np.ndarray(
+        shape=(1, 224, 224, 3),
+        dtype=np.float32
+    )
     data[0] = normalized_image_array
 
-    # Run the inference
-    prediction = model.predict(data)
-    print(prediction)
+    prediction = model.predict(data, verbose=0)
+    st.write("Predicción:", prediction.tolist())
 
     if prediction[0][0] > 0.3:
-        st.header('Abriendo')
-        client1.publish(
-            topic,
-            json.dumps({"gesto": "Abre"}),
-            qos=0,
-            retain=False
-        )
-        time.sleep(0.2)
+        st.header("Abriendo")
+        enviar_gesto("Abre")
 
-    if prediction[0][1] > 0.3:
-        st.header('Cerrando')
-        client1.publish(
-            topic,
-            json.dumps({"gesto": "Cierra"}),
-            qos=0,
-            retain=False
-        )
-        time.sleep(0.2)
+    elif prediction[0][1] > 0.3:
+        st.header("Cerrando")
+        enviar_gesto("Cierra")
+
+    else:
+        st.warning("No se reconoció un gesto con suficiente confianza.")
+
